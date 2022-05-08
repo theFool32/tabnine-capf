@@ -6,14 +6,14 @@ A capf version of [company-tabnine](https://github.com/TommyX12/company-tabnine)
 
 1. Install `tabnine-capf`.
 
-Clone or download this repository.
+   Clone or download this repository.
 
-Add to your load path:
+   Add to your load path:
 
-```emacs
-(add-to-list 'load-path "<path-to-tabnine-capf>")
-(require 'tabnine-capf)
-```
+   ```emacs
+   (add-to-list 'load-path "<path-to-tabnine-capf>")
+   (require 'tabnine-capf)
+   ```
 
 2. Add `tabnine-completion-at-point` to `completion-at-point-functions`
    ```emacs
