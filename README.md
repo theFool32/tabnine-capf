@@ -4,6 +4,19 @@ A capf version of [company-tabnine](https://github.com/TommyX12/company-tabnine)
 
 ## Installation
 
+### use-package
+
+Add following code to your configuration.
+```emacs
+(use-package tabnine-capf
+  :after cape
+  :straight (:host github :repo "50ways2sayhard/tabnine-capf" :files ("*.el" "*.sh"))
+  :hook (kill-emacs . tabnine-capf-kill-process)
+  :config
+  (add-to-list 'completion-at-point-functions #'tabnine-completion-at-point))
+```
+
+### manully
 1. Install `tabnine-capf`.
 
    Clone or download this repository.
