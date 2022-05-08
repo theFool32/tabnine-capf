@@ -4,7 +4,7 @@ A capf version of [company-tabnine](https://github.com/TommyX12/company-tabnine)
 
 ## Installation
 
-### use-package
+### straight-use-package
 
 Add following code to your configuration.
 ```emacs
