@@ -1,4 +1,4 @@
-;; tabnine-capf.el --- A company-mode backend for TabNine
+;; tabnine-capf.el --- A company-mode backend for TabNine ;; -*- lexical-binding: t -*-
 ;;
 ;; Copyright (c) 2022 Tommy Xiang, John Gong
 ;;
@@ -665,7 +665,8 @@ Return completion candidates.  Must be called after `tabnine-capf-query'."
     (tabnine-capf-query))
   (let* ((bounds (bounds-of-thing-at-point 'symbol))
          (thing (thing-at-point 'symbol))
-         (candidates (tabnine-capf--candidates thing)))
+         (candidates (tabnine-capf--candidates thing))
+         (get-candidates (lambda () candidates)))
     (setq-local tabnine-capf--begin-pos (or (car bounds) (point)))
     (list
      (or (car bounds) (point))
@@ -676,11 +677,11 @@ Return completion candidates.  Must be called after `tabnine-capf-query'."
      :annotation-function
      (lambda (candidate)
        "Extract integer from company-tabnine's CANDIDATE."
-       (get-text-property 0 'annotation candidate))
+       (concat "  "(get-text-property 0 'annotation candidate)))
      :exit-function
      (lambda (candidate status)
        "Post-completion function for tabnine."
-       (let ((item (cl-find candidate candidates :test #'string=)))
+       (let ((item (cl-find candidate (funcall get-candidates) :test #'string=)))
          (tabnine-capf--post-completion item)
          )
        )
