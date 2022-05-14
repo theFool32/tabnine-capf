@@ -680,7 +680,9 @@ Return completion candidates.  Must be called after `tabnine-capf-query'."
      :exit-function
      (lambda (candidate status)
        "Post-completion function for tabnine."
-       (tabnine-capf--post-completion candidate)
+       (let ((item (cl-find candidate candidates :test #'string=)))
+         (tabnine-capf--post-completion item)
+         )
        )
      )))
 
