@@ -7,7 +7,7 @@
 ;; Keywords: convenience
 ;; Version: 0.0.1
 ;; URL: https://github.com/50ways2sayhard/tabnine-capf/
-;; Package-Requires: ((emacs "25") (cl-lib "0.5") (dash "2.16.0") (s "1.12.0") (unicode-escape "1.1"))
+;; Package-Requires: ((emacs "25") (cl-lib "0.5") (dash "2.16.0") (epc "0.1.1"))
 ;;
 ;; Permission is hereby granted, free of charge, to any person obtaining a copy
 ;; of this software and associated documentation files (the "Software"), to deal
@@ -51,7 +51,9 @@
 ;; Dependencies
 ;;
 
+(require 'cl-lib)
 (require 'url)
+(require 'dash)
 (require 'epc)
 ;; (require 'corfu)
 
@@ -156,7 +158,7 @@ Only useful on GNU/Linux.  Automatically set if NixOS is detected."
 ;;
 
 
-
+;;  TODO: maybe we should do this in python?
 (defun tabnine-capf--error-no-binaries ()
   "Signal error for when TabNine binary is not found."
   (error "No TabNine binaries found.  Run M-x tabnine-capf-install-binary to download binaries"))
