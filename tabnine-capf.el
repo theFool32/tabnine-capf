@@ -7,7 +7,7 @@
 ;; Keywords: convenience
 ;; Version: 0.0.1
 ;; URL: https://github.com/50ways2sayhard/tabnine-capf/
-;; Package-Requires: ((emacs "25") (cl-lib "0.5") (dash "2.16.0") (epc "0.1.1"))
+;; Package-Requires: ((emacs "25") (cl-lib "0.5") (dash "2.16.0"))
 ;;
 ;; Permission is hereby granted, free of charge, to any person obtaining a copy
 ;; of this software and associated documentation files (the "Software"), to deal
@@ -54,7 +54,7 @@
 (require 'cl-lib)
 (require 'url)
 (require 'dash)
-(require 'epc)
+(require 'tabnine-epc)
 ;; (require 'corfu)
 
 ;;
@@ -65,22 +65,15 @@
   ;; '((after-change-functions . tabnine-capf-query))
   nil
   )
-(defconst tabnine-capf--protocol-version "1.0.14")
 
 ;; tmp file put in tabnine-capf-binaries-folder directory
 (defconst tabnine-capf--version-tempfile "version")
 
-(defvar tabnine-capf-last-change-tick nil)
+
 (defvar tabnine-capf-python-file (expand-file-name "tabnine.py" (file-name-directory load-file-name)))
 ;;
 ;; Macros
 ;;
-
-(defmacro tabnine-capf-with-disabled (&rest body)
-  "Run BODY with `tabnine-capf' temporarily disabled.
-Useful when binding keys to temporarily query other completion backends."
-  `(let ((tabnine-capf--disabled t))
-     ,@body))
 
 ;;
 ;; Customization
@@ -88,7 +81,7 @@ Useful when binding keys to temporarily query other completion backends."
 
 (defgroup tabnine-capf nil
   "Options for tabnine-capf."
-  :link '(url-link :tag "Github" "https://github.com/50ways2sayhard/tabnine-capf")
+  :link '(url-link :tag "Github" "https://github.com/theFool32/tabnine-capf")
   :group 'company
   :prefix "tabnine-capf-")
 
@@ -241,36 +234,33 @@ Only useful on GNU/Linux.  Automatically set if NixOS is detected."
 
 (defun tabnine-capf-start-process ()
   "Start TabNine process."
+  (setq tabnine-capf--disabled t)
   (tabnine-capf-kill-process)
-  (setq tabnine-capf--disabled nil)
   (let ((process-connection-type nil))
     (setq tabnine-capf--process
-          (epc:start-epc "python3"
-                         (list tabnine-capf-python-file)))
-    (epc:call-deferred tabnine-capf--process 'set_executable_path (list (tabnine-capf--executable-path)))
-    (epc:define-method tabnine-capf--process
-                       'tabnine-capf-callback
-                       #'tabnine-capf-callback))
+          (tabnine-epc:start-epc "python3"
+                                 (list tabnine-capf-python-file)))
+    (tabnine-epc:call-deferred tabnine-capf--process 'set_executable_path (list (tabnine-capf--executable-path)))
+    (tabnine-epc:define-method tabnine-capf--process
+                               'tabnine-capf-callback
+                               #'tabnine-capf-callback))
   ;; hook setup
   (message "TabNine server started.")
   (dolist (hook tabnine-capf--hooks-alist)
-    (add-hook (car hook) (cdr hook))))
+    (add-hook (car hook) (cdr hook)))
+  (setq tabnine-capf--disabled nil))
 
 (defun tabnine-capf-callback (&rest args)
-  "From python"
-  (setq tabnine-capf--response args)
-  ;; (when tabnine-capf-last-change-tick
-  ;;   (corfu--auto-complete tabnine-capf-last-change-tick))
-  )
+  "Callback from python."
+  (setq tabnine-capf--response args))
 
 (defun tabnine-capf-kill-process ()
   "Kill TabNine process."
   (interactive)
   (when tabnine-capf--process
     (let ((process tabnine-capf--process))
-      (setq tabnine-capf--process nil) ; this happens first so sentinel don't catch the kill
-      ;; (delete-process process)
-      (epc:stop-epc process)))
+      (setq tabnine-capf--process nil)
+      (tabnine-epc:stop-epc process)))
   ;; hook remove
   (dolist (hook tabnine-capf--hooks-alist)
     (remove-hook (car hook) (cdr hook)))
@@ -281,18 +271,15 @@ Only useful on GNU/Linux.  Automatically set if NixOS is detected."
   (when (null tabnine-capf--process)
     (tabnine-capf-start-process))
   (when tabnine-capf--process
-    (let* ((version (plist-get request :version))
-           (item (plist-get (plist-get request :request) :Autocomplete))
-           (before (plist-get item :before))
-           (after (plist-get item :after))
-           (filename (plist-get item :filename))
-           (region_includes_beginning (plist-get item :region_includes_beginning))
-           (region_includes_end (plist-get item :region_includes_end))
-           (max_num_results (plist-get item :max_num_results)))
-      ;; (setq tabnine-capf--response nil)
-      (epc:call-deferred tabnine-capf--process 'complete (list version before after filename
-                                                               region_includes_beginning region_includes_end
-                                                               max_num_results)))))
+    (let* ((before (plist-get request :before))
+           (after (plist-get request :after))
+           (filename (plist-get request :filename))
+           (region_includes_beginning (plist-get request :region_includes_beginning))
+           (region_includes_end (plist-get request :region_includes_end))
+           (max_num_results (plist-get request :max_num_results)))
+      (tabnine-epc:call-deferred tabnine-capf--process 'complete (list before after filename
+                                                                       region_includes_beginning region_includes_end
+                                                                       max_num_results)))))
 
 (defun tabnine-capf--make-request ()
   "Create request body for method METHOD and parameters PARAMS."
@@ -304,20 +291,16 @@ Only useful on GNU/Linux.  Automatically set if NixOS is detected."
           (min (point-max) (+ (point) tabnine-capf-context-radius-after))))
 
     (list
-     :version tabnine-capf--protocol-version
-     :request
-     (list :Autocomplete
-           (list
-            :before (buffer-substring-no-properties before-point (point))
-            :after (buffer-substring-no-properties (point) after-point)
-            :filename (or (buffer-file-name) nil)
-            :region_includes_beginning (if (= before-point buffer-min)
-                                           t nil)
-            :region_includes_end (if (= after-point buffer-max)
-                                     t nil)
-            :max_num_results tabnine-capf-max-num-results)))))
+     :before (buffer-substring-no-properties before-point (point))
+     :after (buffer-substring-no-properties (point) after-point)
+     :filename (or (buffer-file-name) nil)
+     :region_includes_beginning (if (= before-point buffer-min)
+                                    t nil)
+     :region_includes_end (if (= after-point buffer-max)
+                              t nil)
+     :max_num_results tabnine-capf-max-num-results)))
 
-(defun tabnine-capf-query (&optional begin end length)
+(defun tabnine-capf-query ()
   "Query TabNine server for auto-complete."
   (interactive)
   (unless tabnine-capf--disabled

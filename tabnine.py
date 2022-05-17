@@ -5,13 +5,14 @@ import threading
 
 from epc.server import ThreadingEPCServer
 
+TABNINE_PROTOCOL_VERSION = "1.0.14"
+
 
 class Tabnine(object):
     def __init__(self, path):
         self.name = "tabnine"
         self._proc = None
         self._response = None
-        self.logger = logging.getLogger(self.__class__.__name__)
         self.path = path
 
     def update_path(self, path):
@@ -35,14 +36,16 @@ class Tabnine(object):
         try:
             return json.loads(output)
         except json.JSONDecodeError:
-            self.logger.debug("Tabnine output is corrupted: " + output)
+            # self.logger.debug("Tabnine output is corrupted: " + output)
+            return
 
     def _restart(self):
         if self._proc is not None:
             self._proc.terminate()
             self._proc = None
         if self.path is None:
-            self.logger.error("no Tabnine binary found")
+            # self.logger.error("no Tabnine binary found")
+            self._proc = None
             return
         self._proc = subprocess.Popen(
             [
@@ -59,24 +62,22 @@ class Tabnine(object):
         if self._proc is None:
             self._restart()
         if self._proc is not None and self._proc.poll():
-            self.logger.error(
-                "Tabnine exited with code {}".format(self._proc.returncode)
-            )
+            # self.logger.error(
+            #     "Tabnine exited with code {}".format(self._proc.returncode)
+            # )
             self._restart()
         return self._proc
 
 
 class Manager:
     def __init__(self):
-        self.server = ThreadingEPCServer(("localhost", 0), log_traceback=True)
+        self.server = ThreadingEPCServer(("localhost", 0))
         self.server_thread = threading.Thread(target=self.server.serve_forever)
         self.server_thread.allow_reuse_address = True
         self.try_completion_timer = None
 
         self.path = None
         self.tabnine = Tabnine(self.path)
-
-        self.server.logger.setLevel(logging.DEBUG)
 
         self.setup()
 
@@ -87,7 +88,6 @@ class Manager:
 
     def setup(self):
         def complete(
-            version,
             before,
             after,
             filename,
@@ -104,7 +104,7 @@ class Manager:
 
             filename = None if not isinstance(filename, str) else filename
             data = {
-                "version": version,
+                "version": TABNINE_PROTOCOL_VERSION,
                 "request": {
                     "Autocomplete": {
                         "before": before,
@@ -128,11 +128,10 @@ class Manager:
         self.server.register_function(complete)
         self.server.register_function(set_executable_path)
 
-    def main(self):
-        self.server_thread.start()
+    def run(self):
         self.server.print_port()
+        self.server_thread.start()
 
 
 if __name__ == "__main__":
-    m = Manager()
-    m.main()
+    Manager().run()
