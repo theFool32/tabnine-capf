@@ -51,6 +51,13 @@
 ;; Dependencies
 ;;
 
+;;  TODO:
+;; [  ] make the tabnine-capf show up automatically
+;; [  ] start the tabnine more naturally
+;; [  ] check whether prefix influences the results
+;; [  ] refactor the code, especially the name of variables
+
+
 (require 'cl-lib)
 (require 'url)
 (require 'dash)
@@ -66,14 +73,7 @@
   nil
   )
 
-;; tmp file put in tabnine-capf-binaries-folder directory
-(defconst tabnine-capf--version-tempfile "version")
-
-
-(defvar tabnine-capf-python-file (expand-file-name "tabnine.py" (file-name-directory load-file-name)))
-;;
-;; Macros
-;;
+(defconst tabnine-capf-python-file (expand-file-name "tabnine.py" (file-name-directory load-file-name)))
 
 ;;
 ;; Customization
@@ -101,19 +101,6 @@ Note that setting this too small will cause TabNine to not be able to read the e
   "The number of chars after point to send for completion."
   :group 'tabnine-capf
   :type 'integer)
-
-(defcustom tabnine-capf-binaries-folder "~/.TabNine"
-  "Path to TabNine binaries folder.
-`tabnine-capf-install-binary' will use this directory."
-  :group 'tabnine-capf
-  :type 'string)
-
-(defcustom tabnine-capf-install-static-binary (file-exists-p "/etc/nixos/hardware-configuration.nix")
-  "Whether to install the musl-linked static binary instead of
-the standard glibc-linked dynamic binary.
-Only useful on GNU/Linux.  Automatically set if NixOS is detected."
-  :group 'tabnine-capf
-  :type 'boolean)
 
 (defcustom tabnine-capf-auto-balance t
   "Whether TabNine should insert balanced parentheses upon completion."
@@ -150,87 +137,12 @@ Only useful on GNU/Linux.  Automatically set if NixOS is detected."
 ;; Global methods
 ;;
 
-
-;;  TODO: maybe we should do this in python?
-(defun tabnine-capf--error-no-binaries ()
-  "Signal error for when TabNine binary is not found."
-  (error "No TabNine binaries found.  Run M-x tabnine-capf-install-binary to download binaries"))
-
-(defun tabnine-capf--get-target ()
-  "Return TabNine's system configuration.  Used for finding the correct binary."
-  (let* ((system-architecture (car (s-split "-" system-configuration)))
-         (tabnine-architecture
-          (cond
-           ((or (string= system-architecture "aarch64")
-                (and (eq system-type 'darwin)
-                     (string= system-architecture "x86_64")
-                     ;; Detect AArch64 running x86_64 Emacs
-                     (string= (shell-command-to-string "arch -arm64 uname -m") "arm64\n")))
-            "aarch64")
-           ((or (string= system-architecture "arm")
-                (and (eq system-type 'darwin)
-                     (string= system-architecture "x86_64")
-                     ;; Detect AArch64 running x86_64 Emacs
-                     (string= (shell-command-to-string "arch -arm64 uname -m") "arm64\n")))
-            "aarch64")
-           ((string= system-architecture "x86_64")
-            "x86_64")
-           ((string-match system-architecture "i.86")
-            "i686")
-           (t
-            (error "Unknown or unsupported architecture %s" system-architecture))))
-
-         (os
-          (cond
-           ((or (eq system-type 'ms-dos)
-                (eq system-type 'windows-nt)
-                (eq system-type 'cygwin))
-            "pc-windows-gnu")
-           ((or (eq system-type 'darwin))
-            "apple-darwin")
-           (tabnine-capf-install-static-binary
-            "unknown-linux-musl")
-           (t
-            "unknown-linux-gnu"))))
-
-    (concat tabnine-architecture "-" os)))
-
-(defun tabnine-capf--get-exe ()
-  "Return TabNine's binary file name.  Used for finding the correct binary."
-  (cond
-   ((or (eq system-type 'ms-dos)
-        (eq system-type 'windows-nt)
-        (eq system-type 'cygwin))
-    "TabNine.exe")
-   (t
-    "TabNine")))
-
-(defun tabnine-capf--executable-path ()
-  "Find and return the path of the latest TabNine binary for the current system."
-  (let ((parent tabnine-capf-binaries-folder))
-    (if (file-directory-p parent)
-        (let* ((children (->> (directory-files parent)
-                              (--remove (member it '("." "..")))
-                              (--filter (file-directory-p
-                                         (expand-file-name
-                                          it
-                                          (file-name-as-directory
-                                           parent))))
-                              (--filter (ignore-errors (version-to-list it)))
-                              (-non-nil)))
-               (sorted (nreverse (sort children #'version<)))
-               (target (tabnine-capf--get-target))
-               (filename (tabnine-capf--get-exe)))
-          (cl-loop
-           for ver in sorted
-           for fullpath = (expand-file-name (format "%s/%s/%s"
-                                                    ver target filename)
-                                            parent)
-           if (and (file-exists-p fullpath)
-                   (file-regular-p fullpath))
-           return fullpath
-           finally do (tabnine-capf--error-no-binaries)))
-      (tabnine-capf--error-no-binaries))))
+;;;###autoload
+(defun tabnine-capf-install-binary ()
+  "Install Tabnine binary."
+  (interactive)
+  (when (tabnine-epc:live-p tabnine-capf--process)
+    (tabnine-epc:call-deferred tabnine-capf--process 'install_tabnine nil)))
 
 (defun tabnine-capf-start-process ()
   "Start TabNine process."
@@ -240,7 +152,6 @@ Only useful on GNU/Linux.  Automatically set if NixOS is detected."
     (setq tabnine-capf--process
           (tabnine-epc:start-epc "python3"
                                  (list tabnine-capf-python-file)))
-    (tabnine-epc:call-deferred tabnine-capf--process 'set_executable_path (list (tabnine-capf--executable-path)))
     (tabnine-epc:define-method tabnine-capf--process
                                'tabnine-capf-callback
                                #'tabnine-capf-callback))
@@ -358,56 +269,6 @@ Return completion candidates.  Must be called after `tabnine-capf-query'."
   (interactive)
   (tabnine-capf-start-process))
 
-(defun tabnine-capf-install-binary ()
-  "Install TabNine binary into `tabnine-capf-binaries-folder'."
-  (interactive)
-  (let ((version-tempfile (concat
-                           (file-name-as-directory
-                            tabnine-capf-binaries-folder)
-                           tabnine-capf--version-tempfile))
-        (target (tabnine-capf--get-target))
-        (exe (tabnine-capf--get-exe))
-        (binaries-dir tabnine-capf-binaries-folder))
-    (message version-tempfile)
-    (message "Getting current version...")
-    (make-directory (file-name-directory version-tempfile) t)
-    (url-copy-file "https://update.tabnine.com/bundles/version" version-tempfile t)
-    (let ((version (s-trim (with-temp-buffer (insert-file-contents version-tempfile) (buffer-string)))))
-      (when (= (length version) 0)
-        (error "TabNine installation failed.  Please try again"))
-      (message "Current version is %s" version)
-      (let* ((url (concat "https://update.tabnine.com/bundles/" version "/" target "/TabNine.zip"))
-             (version-directory (file-name-as-directory
-                                 (concat
-                                  (file-name-as-directory
-                                   (concat (file-name-as-directory binaries-dir) version)))))
-             (target-directory (file-name-as-directory (concat version-directory target) ))
-             (bundle-path (concat version-directory (format "%s.zip" target)))
-             (target-path (concat target-directory exe)))
-        (message "Installing at %s. Downloading %s ..." target-path url)
-        (make-directory target-directory t)
-        (url-copy-file url bundle-path t)
-        (condition-case ex
-            (let ((default-directory target-directory))
-              (if (or (eq system-type 'ms-dos)
-                      (eq system-type 'windows-nt)
-                      (eq system-type 'cygwin))
-                  (shell-command (format "tar -xf %s" (expand-file-name bundle-path)))
-                (shell-command (format "unzip -o %s -d %s"
-                                       (expand-file-name bundle-path)
-                                       (expand-file-name target-directory)))))
-          ('error
-           (error "Unable to unzip automatically. Please go to [%s] and unzip the content of [%s] into [%s/]."
-                  (expand-file-name version-directory)
-                  (file-name-nondirectory bundle-path)
-                  (file-name-sans-extension (file-name-nondirectory bundle-path)))))
-        (mapc (lambda (filename)
-                (set-file-modes (concat target-directory filename) (string-to-number "744" 8)))
-              (--remove (member it '("." "..")) (directory-files target-directory)))
-        (delete-file bundle-path)
-        (delete-file version-tempfile)
-        (message "TabNine installation complete.")))))
-
 ;;;###autoload
 (defun tabnine-completion-at-point (&optional interactive)
   "TabNine Completion at point function."
@@ -440,15 +301,6 @@ Return completion candidates.  Must be called after `tabnine-capf-query'."
              (tabnine-capf--post-completion item)
              )
            ))))))
-
-;;
-;; Advices
-;;
-
-
-;;
-;; Hooks
-;;
 
 
 (provide 'tabnine-capf)

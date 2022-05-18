@@ -39,6 +39,15 @@
 (require 'cl-lib)
 
 ;; deferred
+(defmacro tabnine-epc-deferred-chain (&rest elements)
+  "Anaphoric function chain macro for deferred chains."
+  (declare (debug (&rest form))
+           (indent 0))
+  `(let (it)
+     ,@(cl-loop for i in elements
+                collect
+                `(setq it ,i))
+     it))
 
 ;; Debug
 (defvar tabnine-epc-deferred-debug nil
@@ -265,11 +274,6 @@ is a short cut of following code:
 (defvar tabnine-epc:debug-out nil)
 (defvar tabnine-epc:debug-buffer "*epc log*")
 
-(defvar tabnine-epc:mngr)
-
-;;(setq tabnine-epc:debug-out t)
-;;(setq tabnine-epc:debug-out nil)
-
 (defun tabnine-epc:log-init ()
   (when (get-buffer tabnine-epc:debug-buffer)
     (kill-buffer tabnine-epc:debug-buffer)))
@@ -289,13 +293,6 @@ is a short cut of following code:
       (set (make-local-variable 'kill-buffer-query-functions) nil)
       (erase-buffer) (buffer-disable-undo))
     buf))
-
-(defun tabnine-epc:document-function (function docstring)
-  "Document FUNCTION with DOCSTRING.  Use this for `defstruct' accessor etc."
-  (put function 'function-documentation docstring))
-(put 'tabnine-epc:document-function 'lisp-indent-function 'defun)
-(put 'tabnine-epc:document-function 'doc-string-elt 2)
-
 
 ;;==================================================
 ;; Low Level Interface
@@ -319,27 +316,6 @@ process : Connection process object.
 buffer  : Working buffer for the incoming data.
 channel : Event channels for incoming messages."
   name process buffer channel)
-
-(tabnine-epc:document-function 'tabnine-epc:connection-name
-  "[internal] Connection name. This name is used for process and buffer names.
-
-\(fn TABNINE-EPC:CONNECTION)")
-
-(tabnine-epc:document-function 'tabnine-epc:connection-process
-  "[internal] Connection process object.
-
-\(fn TABNINE-EPC:CONNECTION)")
-
-(tabnine-epc:document-function 'tabnine-epc:connection-buffer
-  "[internal] Working buffer for the incoming data.
-
-\(fn TABNINE-EPC:CONNECTION)")
-
-(tabnine-epc:document-function 'tabnine-epc:connection-channel
-  "[internal] Event channels for incoming messages.
-
-\(fn TABNINE-EPC:CONNECTION)")
-
 
 (defun tabnine-epc:connect (host port)
   "[internal] Connect the server, initialize the process and
@@ -375,7 +351,7 @@ return tabnine-epc:connection object."
 (defun tabnine-epc:net-send (connection sexp)
   (let* ((msg (encode-coding-string
                (concat (tabnine-epc:prin1-to-string sexp) "\n") 'utf-8-unix))
-         (string (concat (tabnine-epc:net-encode-length (length msg)) msg))
+         (string (concat (format "%06x" (length msg)) msg))
          (proc (tabnine-epc:connection-process connection)))
     (tabnine-epc:log ">> SEND : [%S]" string)
     (process-send-string proc string)))
@@ -444,7 +420,7 @@ observers can get the values by following code:
                   (setq ok t))
               ('error (tabnine-epc:log "MsgError: %S / <= %S" err event)))
           (unless ok
-            (tabnine-epc:run-when-idle 'tabnine-epc:process-available-input connection process)))))))
+            (tabnine-epc:process-available-input connection process)))))))
 
 (defun tabnine-epc:net-have-input-p ()
   "Return true if a complete message is available."
@@ -452,13 +428,7 @@ observers can get the values by following code:
   (and (>= (buffer-size) 6)
        (>= (- (buffer-size) 6) (tabnine-epc:net-decode-length))))
 
-(defun tabnine-epc:run-when-idle (function &rest args)
-  "Call FUNCTION as soon as Emacs is idle."
-  (apply #'run-at-time
-         (if (featurep 'xemacs) itimer-short-interval 0)
-         nil function args))
-
-(defun tabnine-epc:net-read-or-lose (process)
+(defun tabnine-epc:net-read-or-lose (_process)
   (condition-case error
       (tabnine-epc:net-read)
     (error
@@ -470,7 +440,7 @@ observers can get the values by following code:
   (goto-char (point-min))
   (let* ((length (tabnine-epc:net-decode-length))
          (start (+ 6 (point)))
-         (end (+ start length)) content)
+         (end (+ start length)))
     (cl-assert (cl-plusp length))
     (prog1 (save-restriction
              (narrow-to-region start end)
@@ -482,10 +452,6 @@ observers can get the values by following code:
   "Read a 24-bit hex-encoded integer from buffer."
   (string-to-number (buffer-substring-no-properties (point) (+ (point) 6)) 16))
 
-(defun tabnine-epc:net-encode-length (n)
-  "Encode an integer into a 24-bit hex string."
-  (format "%06x" n))
-
 (defun tabnine-epc:prin1-to-string (sexp)
   "Like `prin1-to-string' but don't octal-escape non-ascii characters.
 This is more compatible with the CL reader."
@@ -496,7 +462,6 @@ This is more compatible with the CL reader."
           print-level)
       (prin1 sexp (current-buffer))
       (buffer-string))))
-
 
 ;;==================================================
 ;; High Level Interface
@@ -516,54 +481,6 @@ sessions       : alist of session (id . deferred)
 exit-hook      : functions for after shutdown EPC connection"
   title server-process commands port connection methods sessions exit-hooks)
 
-(tabnine-epc:document-function 'tabnine-epc:manager-title
-  "Instance name (string) for displaying on the `tabnine-epc:controller' UI
-
-You can modify this slot using `setf' to change the title column
-in the `tabnine-epc:controller' table UI.
-
-\(fn TABNINE-EPC:MANAGER)")
-
-(tabnine-epc:document-function 'tabnine-epc:manager-server-process
-  "Process object for the peer.
-
-This is *not* network process but the external program started by
-`tabnine-epc:start-epc'.  For network process, see `tabnine-epc:connection-process'.
-
-\(fn TABNINE-EPC:MANAGER)")
-
-(tabnine-epc:document-function 'tabnine-epc:manager-commands
-  "[internal] a list of (prog . args)
-
-\(fn TABNINE-EPC:MANAGER)")
-
-(tabnine-epc:document-function 'tabnine-epc:manager-port
-  "Port number (integer).
-
-\(fn TABNINE-EPC:MANAGER)")
-
-(tabnine-epc:document-function 'tabnine-epc:manager-connection
-  "[internal] tabnine-epc:connection instance
-
-\(fn TABNINE-EPC:MANAGER)")
-
-(tabnine-epc:document-function 'tabnine-epc:manager-methods
-  "[internal] alist of method (name . function)
-
-\(fn TABNINE-EPC:MANAGER)")
-
-(tabnine-epc:document-function 'tabnine-epc:manager-sessions
-  "[internal] alist of session (id . deferred)
-
-\(fn TABNINE-EPC:MANAGER)")
-
-(tabnine-epc:document-function 'tabnine-epc:manager-exit-hooks
-  "Hooks called after shutdown EPC connection.
-
-Use `tabnine-epc:manager-add-exit-hook' to add hook.
-
-\(fn TABNINE-EPC:MANAGER)")
-
 (cl-defstruct tabnine-epc:method
   "Object to hold serving method information.
 
@@ -573,27 +490,6 @@ arg-specs  : arg-specs (one string) ex: \"(A B C D)\"
 docstring  : docstring (one string) ex: \"A test function. Return sum of A,B,C and D\"
 "
   name task docstring arg-specs)
-
-(tabnine-epc:document-function 'tabnine-epc:method-name
-  "[internal] method name (symbol)   ex: 'test
-
-\(fn TABNINE-EPC:METHOD)")
-
-(tabnine-epc:document-function 'tabnine-epc:method-task
-  "[internal] method function (function with one argument)
-
-\(fn TABNINE-EPC:METHOD)")
-
-(tabnine-epc:document-function 'tabnine-epc:method-arg-specs
-  "[internal] arg-specs (one string) ex: \"(A B C D)\"
-
-\(fn TABNINE-EPC:METHOD)")
-
-(tabnine-epc:document-function 'tabnine-epc:method-docstring
-  "[internal] docstring (one string) ex: \"A test function. Return sum of A,B,C and D\"
-
-\(fn TABNINE-EPC:METHOD)")
-
 
 (defvar tabnine-epc:live-connections nil
   "[internal] A list of `tabnine-epc:manager' objects those currently connect to the epc peer.
@@ -620,11 +516,6 @@ failure."
   (let ((mngr (tabnine-epc:start-server server-prog server-args)))
     (tabnine-epc:init-epc-layer mngr)
     mngr))
-
-(defun tabnine-epc:start-epc-deferred (server-prog server-args)
-  "Deferred version of `tabnine-epc:start-epc'"
-  (deferred:nextc (tabnine-epc:start-server-deferred server-prog server-args)
-                  #'tabnine-epc:init-epc-layer))
 
 (defun tabnine-epc:server-process-name (uid)
   (format "tabnine-epc:server:%s" uid))
@@ -666,50 +557,6 @@ to see full traceback:\n%s" port-str))
                               :port port
                               :connection (tabnine-epc:connect "localhost" port))))
 
-(defun tabnine-epc:start-server-deferred (server-prog server-args)
-  "[internal] Same as `tabnine-epc:start-server' but start the server asynchronously."
-  (let*
-      ((uid (tabnine-epc:uid))
-       (process-name (tabnine-epc:server-process-name uid))
-       (process-buffer (get-buffer-create (tabnine-epc:server-buffer-name uid)))
-       (process (apply 'start-process
-                       process-name process-buffer
-                       server-prog server-args))
-       (mngr (make-tabnine-epc:manager
-              :server-process process
-              :commands (cons server-prog server-args)
-              :title (mapconcat 'identity (cons server-prog server-args) " ")))
-       (cont 1) port)
-    (set-process-query-on-exit-flag process nil)
-    (deferred:$
-     (deferred:next
-      (deferred:lambda (_)
-                       (accept-process-output process 0 nil t)
-                       (let ((port-str (with-current-buffer process-buffer
-                                         (buffer-string))))
-                         (cond
-                          ((string-match "^[0-9]+$" port-str)
-                           (setq port (string-to-number port-str)
-                                 cont nil))
-                          ((< 0 (length port-str))
-                           (error "Server may raise an error. \
-Use \"M-x tabnine-epc:pop-to-last-server-process-buffer RET\" \
-to see full traceback:\n%s" port-str))
-                          ((not (eq 'run (process-status process)))
-                           (setq cont nil))
-                          (t
-                           (cl-incf cont)
-                           (when (< tabnine-epc:accept-process-timeout-count cont)
-                             ;; timeout 15 seconds
-                             (error "Timeout server response."))
-                           (deferred:nextc (deferred:wait tabnine-epc:accept-process-timeout)
-                                           self))))))
-     (deferred:nextc it
-                     (lambda (_)
-                       (setf (tabnine-epc:manager-port mngr) port)
-                       (setf (tabnine-epc:manager-connection mngr) (tabnine-epc:connect "localhost" port))
-                       mngr)))))
-
 (defun tabnine-epc:stop-epc (mngr)
   "Disconnect the connection for the server."
   (let* ((proc (tabnine-epc:manager-server-process mngr))
@@ -720,9 +567,6 @@ to see full traceback:\n%s" port-str))
     (when (and proc (equal 'run (process-status proc)))
       (kill-process proc))
     (when buf  (kill-buffer buf))
-    (condition-case err
-        (tabnine-epc:manager-fire-exit-hook mngr)
-      (error (tabnine-epc:log "Error on exit-hooks : %S / " err mngr)))
     (tabnine-epc:live-connections-delete mngr)))
 
 (defun tabnine-epc:start-epc-debug (port)
@@ -772,22 +616,6 @@ to see full traceback:\n%s" port-str))
     (tabnine-epc:live-connections-add mngr)
     mngr))
 
-
-
-(defun tabnine-epc:manager-add-exit-hook (mngr hook-function)
-  "Register the HOOK-FUNCTION which is called after the EPC connection closed by the EPC controller UI.
-HOOK-FUNCTION is a function with no argument."
-  (let* ((hooks (tabnine-epc:manager-exit-hooks mngr)))
-    (setf (tabnine-epc:manager-exit-hooks mngr) (cons hook-function hooks))
-    mngr))
-
-(defun tabnine-epc:manager-fire-exit-hook (mngr)
-  "[internal] Call exit-hooks functions of MNGR. After calling hooks, this functions clears the hook slot so as not to call doubly."
-  (let* ((hooks (tabnine-epc:manager-exit-hooks mngr)))
-    (run-hooks hooks)
-    (setf (tabnine-epc:manager-exit-hooks mngr) nil)
-    mngr))
-
 (defun tabnine-epc:manager-status-server-process (mngr)
   "[internal] Return the status of the process object for the peer process. If the process is nil, return nil."
   (and mngr
@@ -825,8 +653,7 @@ HOOK-FUNCTION is a function with no argument."
 (defun tabnine-epc:handler-called-method (mngr uid name args)
   "[internal] low-level message handler for peer's calling."
   (let ((mngr mngr) (uid uid))
-    (let* ((methods (tabnine-epc:manager-methods mngr))
-           (method (tabnine-epc:manager-get-method mngr name)))
+    (let* ((method (tabnine-epc:manager-get-method mngr name)))
       (cond
        ((null method)
         (tabnine-epc:log "ERR: No such method : %s" name)
@@ -836,8 +663,8 @@ HOOK-FUNCTION is a function with no argument."
             (let* ((f (tabnine-epc:method-task method))
                    (ret (apply f args)))
               (cond
-               ((deferred-p ret)
-                (deferred:nextc ret
+               ((tabnine-epc-deferred-object-p ret)
+                (tabnine-epc-deferred-nextc ret
                                 (lambda (xx) (tabnine-epc:manager-send mngr 'return uid xx))))
                (t (tabnine-epc:manager-send mngr 'return uid ret))))
           (error
@@ -860,7 +687,7 @@ HOOK-FUNCTION is a function with no argument."
      (pair
       (tabnine-epc:log "RET: id:%s [%S]" uid args)
       (tabnine-epc:manager-remove-session mngr uid)
-      (deferred:callback (cdr pair) args))
+      (tabnine-epc-deferred-callback (cdr pair) args))
      (t ; error
       (tabnine-epc:log "RET: NOT FOUND: id:%s [%S]" uid args)))))
 
@@ -871,7 +698,7 @@ HOOK-FUNCTION is a function with no argument."
      (pair
       (tabnine-epc:log "RET-ERR: id:%s [%S]" uid args)
       (tabnine-epc:manager-remove-session mngr uid)
-      (deferred:errorback (cdr pair) (format "%S" args)))
+      (tabnine-epc-deferred-errorback (cdr pair) (format "%S" args)))
      (t ; error
       (tabnine-epc:log "RET-ERR: NOT FOUND: id:%s [%S]" uid args)))))
 
@@ -882,7 +709,7 @@ HOOK-FUNCTION is a function with no argument."
      (pair
       (tabnine-epc:log "RET-EPC-ERR: id:%s [%S]" uid args)
       (tabnine-epc:manager-remove-session mngr uid)
-      (deferred:errorback (cdr pair) (list 'epc-error args)))
+      (tabnine-epc-deferred-errorback (cdr pair) (list 'epc-error args)))
      (t ; error
       (tabnine-epc:log "RET-EPC-ERR: NOT FOUND: id:%s [%S]" uid args)))))
 
@@ -913,10 +740,11 @@ object which is called with the result."
   "Wrap deferred methods with synchronous waiting, and return the result.
 If an exception is occurred, this function throws the error."
   (let ((result 'tabnine-epc:nothing))
-    (deferred:$ d
-                (deferred:nextc it
+    (tabnine-epc-deferred-chain
+     d
+                (tabnine-epc-deferred-nextc it
                                 (lambda (x) (setq result x)))
-                (deferred:error it
+                (tabnine-epc-deferred-error it
                                 (lambda (er) (setq result (cons 'error er)))))
     (while (eq result 'tabnine-epc:nothing)
       (save-current-buffer

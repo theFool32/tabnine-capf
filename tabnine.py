@@ -1,11 +1,13 @@
 import json
-import logging
 import subprocess
 import threading
+import os
+from utils import install_tabnine_at, get_tabnine_path
 
 from epc.server import ThreadingEPCServer
 
 TABNINE_PROTOCOL_VERSION = "1.0.14"
+TABNINE_BINARIES_FOLDER = os.path.expanduser("~/.TabNine/")
 
 
 class Tabnine(object):
@@ -76,8 +78,7 @@ class Manager:
         self.server_thread.allow_reuse_address = True
         self.try_completion_timer = None
 
-        self.path = None
-        self.tabnine = Tabnine(self.path)
+        self.tabnine = Tabnine(get_tabnine_path(TABNINE_BINARIES_FOLDER))
 
         self.setup()
 
@@ -121,12 +122,11 @@ class Manager:
             )
             self.try_completion_timer.start()
 
-        def set_executable_path(path):
-            self.path = path
-            self.tabnine.update_path(self.path)
+        def install_tabnine():
+            install_tabnine_at(TABNINE_BINARIES_FOLDER)
 
         self.server.register_function(complete)
-        self.server.register_function(set_executable_path)
+        self.server.register_function(install_tabnine)
 
     def run(self):
         self.server.print_port()
