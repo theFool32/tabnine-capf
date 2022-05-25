@@ -62,7 +62,7 @@
 (require 'url)
 (require 'dash)
 (require 'tabnine-epc)
-;; (require 'corfu)
+(require 'corfu)
 
 ;;
 ;; Constants
@@ -129,6 +129,8 @@ Note that setting this too small will cause TabNine to not be able to read the e
 (defvar tabnine-capf--disabled nil
   "Variable to temporarily disable tabnine-capf and pass control to next backend.")
 
+(defvar tabnine-capf--corfu-tick nil)
+
 ;;
 ;; Major mode definition
 ;;
@@ -161,9 +163,38 @@ Note that setting this too small will cause TabNine to not be able to read the e
     (add-hook (car hook) (cdr hook)))
   (setq tabnine-capf--disabled nil))
 
+(defun update-corfu ()
+  "Update corfu candidate manually."
+  (pcase (while-no-input ;; Interruptible capf query
+           (run-hook-wrapped 'completion-at-point-functions #'corfu--capf-wrapper))
+    (`(,fun ,beg ,end ,table . ,plist)
+     (let ((completion-in-region-mode-predicate
+            (lambda () (eq beg (car-safe (funcall fun)))))
+           (completion-extra-properties plist))
+       (setq completion-in-region--data
+             (list (if (markerp beg) beg (copy-marker beg))
+                   (copy-marker end t)
+                   table
+                   (plist-get plist :predicate)))
+
+       ;; Refresh candidates forcibly!!!
+       (pcase-let* ((`(,beg ,end ,table ,pred) completion-in-region--data)
+                    (pt (- (point) beg))
+                    (str (buffer-substring-no-properties beg end)))
+         (corfu--update-candidates str pt table (plist-get plist :predicate)))
+
+       (corfu--setup)
+       (corfu--update)))))
+
 (defun tabnine-capf-callback (&rest args)
   "Callback from python."
-  (setq tabnine-capf--response args))
+  (setq tabnine-capf--response args)
+  ;;  TODO: need a more elegant way to handle this
+  (when (and
+         (< corfu--index 0)
+         (or (not (featurep 'evil)) (evil-insert-state-p))
+         (equal tabnine-capf--corfu-tick (corfu--auto-tick)))
+    (update-corfu)))
 
 (defun tabnine-capf-kill-process ()
   "Kill TabNine process."
@@ -181,16 +212,18 @@ Note that setting this too small will cause TabNine to not be able to read the e
   "Send REQUEST to TabNine server.  REQUEST needs to be JSON-serializable object."
   (when (null tabnine-capf--process)
     (tabnine-capf-start-process))
-  (when tabnine-capf--process
-    (let* ((before (plist-get request :before))
-           (after (plist-get request :after))
-           (filename (plist-get request :filename))
-           (region_includes_beginning (plist-get request :region_includes_beginning))
-           (region_includes_end (plist-get request :region_includes_end))
-           (max_num_results (plist-get request :max_num_results)))
-      (tabnine-epc:call-deferred tabnine-capf--process 'complete (list before after filename
-                                                                       region_includes_beginning region_includes_end
-                                                                       max_num_results)))))
+  (let ((tmp-tick (corfu--auto-tick)))
+    (unless (equal tabnine-capf--corfu-tick tmp-tick)
+      (setq tabnine-capf--corfu-tick tmp-tick)
+      (let* ((before (plist-get request :before))
+             (after (plist-get request :after))
+             (filename (plist-get request :filename))
+             (region_includes_beginning (plist-get request :region_includes_beginning))
+             (region_includes_end (plist-get request :region_includes_end))
+             (max_num_results (plist-get request :max_num_results)))
+        (tabnine-epc:call-deferred tabnine-capf--process 'complete (list before after filename
+                                                                         region_includes_beginning region_includes_end
+                                                                         max_num_results))))))
 
 (defun tabnine-capf--make-request ()
   "Create request body for method METHOD and parameters PARAMS."
@@ -281,7 +314,6 @@ Return completion candidates.  Must be called after `tabnine-capf-query'."
            (get-candidates (lambda () candidates))
            (start (or (car bounds) (point)))
            (end (or (cdr bounds) (point))))
-      ;; (message "[candidates] %s %s" candidates tabnine-capf--response)
       (unless tabnine-capf--disabled
         (tabnine-capf-query)
         (list
@@ -298,9 +330,7 @@ Return completion candidates.  Must be called after `tabnine-capf-query'."
          (lambda (candidate status)
            "Post-completion function for tabnine."
            (let ((item (cl-find candidate (funcall get-candidates) :test #'string=)))
-             (tabnine-capf--post-completion item)
-             )
-           ))))))
+             (tabnine-capf--post-completion item))))))))
 
 
 (provide 'tabnine-capf)

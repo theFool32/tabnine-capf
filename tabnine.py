@@ -2,6 +2,7 @@ import json
 import subprocess
 import threading
 import os
+from typing import Dict, Optional, Union
 from utils import install_tabnine_at, get_tabnine_path
 
 from epc.server import ThreadingEPCServer
@@ -11,20 +12,20 @@ TABNINE_BINARIES_FOLDER = os.path.expanduser("~/.TabNine/")
 
 
 class Tabnine(object):
-    def __init__(self, path):
+    def __init__(self, path: str):
         self.name = "tabnine"
         self._proc = None
         self._response = None
         self.path = path
 
-    def update_path(self, path):
+    def update_path(self, path: str) -> None:
         self.path = path
         self._restart()
 
-    def request(self, data):
+    def request(self, data: Union[Dict, str]) -> Optional[Dict]:
         proc = self._get_running_tabnine()
         if proc is None:
-            return
+            return None
         try:
             if not isinstance(data, str):
                 data = json.dumps(data)
@@ -32,21 +33,20 @@ class Tabnine(object):
             proc.stdin.flush()
         except BrokenPipeError:
             self._restart()
-            return
+            return None
 
         output = proc.stdout.readline().decode("utf8")
         try:
             return json.loads(output)
         except json.JSONDecodeError:
             # self.logger.debug("Tabnine output is corrupted: " + output)
-            return
+            return None
 
     def _restart(self):
         if self._proc is not None:
             self._proc.terminate()
             self._proc = None
         if self.path is None:
-            # self.logger.error("no Tabnine binary found")
             self._proc = None
             return
         self._proc = subprocess.Popen(
@@ -64,9 +64,6 @@ class Tabnine(object):
         if self._proc is None:
             self._restart()
         if self._proc is not None and self._proc.poll():
-            # self.logger.error(
-            #     "Tabnine exited with code {}".format(self._proc.returncode)
-            # )
             self._restart()
         return self._proc
 
@@ -76,25 +73,25 @@ class Manager:
         self.server = ThreadingEPCServer(("localhost", 0))
         self.server_thread = threading.Thread(target=self.server.serve_forever)
         self.server_thread.allow_reuse_address = True
-        self.try_completion_timer = None
+        self.try_completion_timer: Optional[threading.Timer] = None
 
         self.tabnine = Tabnine(get_tabnine_path(TABNINE_BINARIES_FOLDER))
 
         self.setup()
 
-    def do_completion(self, data):
+    def do_completion(self, data: Union[str, Dict]):
         result = self.tabnine.request(data)
-        if result:
+        if result and len(result["results"]) > 0:
             self.server.clients[0].call("tabnine-capf-callback", result)
 
     def setup(self):
         def complete(
-            before,
-            after,
-            filename,
-            region_includes_beginning,
-            region_includes_end,
-            max_num_results,
+            before: str,
+            after: str,
+            filename: str,
+            region_includes_beginning: Union[str, bool],
+            region_includes_end: Union[str, bool],
+            max_num_results: int,
         ):
             if (
                 self.try_completion_timer is not None
@@ -118,7 +115,7 @@ class Manager:
                 },
             }
             self.try_completion_timer = threading.Timer(
-                0.1, lambda: self.do_completion(data)
+                0.15, lambda: self.do_completion(data)
             )
             self.try_completion_timer.start()
 

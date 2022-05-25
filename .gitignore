@@ -1,2 +1,3 @@
 binaries/
 *.elc
+__pycache__
