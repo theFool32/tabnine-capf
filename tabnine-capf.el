@@ -321,7 +321,7 @@ Return completion candidates.  Must be called after `tabnine-capf-query'."
          end
          candidates
          :exclusive 'no
-         :company-kind (lambda (_) nil)
+         :company-kind (lambda (_) (intern "tabnine"))
          :annotation-function
          (lambda (candidate)
            "Extract integer from company-tabnine's CANDIDATE."
