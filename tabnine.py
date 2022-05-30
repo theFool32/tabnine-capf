@@ -1,11 +1,12 @@
 import json
+import os
 import subprocess
 import threading
-import os
 from typing import Dict, Optional, Union
-from utils import install_tabnine_at, get_tabnine_path
 
 from epc.server import ThreadingEPCServer
+
+from utils import get_tabnine_path, install_tabnine_at
 
 TABNINE_PROTOCOL_VERSION = "1.0.14"
 TABNINE_BINARIES_FOLDER = os.path.expanduser("~/.TabNine/")
@@ -114,8 +115,9 @@ class Manager:
                     }
                 },
             }
+            #  TODO: Do we really wait here?
             self.try_completion_timer = threading.Timer(
-                0.15, lambda: self.do_completion(data)
+                0.05, lambda: self.do_completion(data)
             )
             self.try_completion_timer.start()
 
