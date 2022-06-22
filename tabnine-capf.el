@@ -165,26 +165,30 @@ Note that setting this too small will cause TabNine to not be able to read the e
 
 (defun update-corfu ()
   "Update corfu candidate manually."
-  (pcase (while-no-input ;; Interruptible capf query
-           (run-hook-wrapped 'completion-at-point-functions #'corfu--capf-wrapper))
-    (`(,fun ,beg ,end ,table . ,plist)
-     (let ((completion-in-region-mode-predicate
-            (lambda () (eq beg (car-safe (funcall fun)))))
-           (completion-extra-properties plist))
-       (setq completion-in-region--data
-             (list (if (markerp beg) beg (copy-marker beg))
-                   (copy-marker end t)
-                   table
-                   (plist-get plist :predicate)))
+  ;;  HACK: still suffer from wrong icons
+  (corfu--auto-complete nil)
+  ;; (pcase (while-no-input ;; Interruptible capf query
+  ;;          (run-hook-wrapped 'completion-at-point-functions #'corfu--capf-wrapper))
+  ;;   (`(,fun ,beg ,end ,table . ,plist)
+  ;;    (let ((completion-in-region-mode-predicate
+  ;;           (lambda () (eq beg (car-safe (funcall fun)))))
+  ;;          (completion-extra-properties plist))
+  ;;      (setq completion-in-region--data
+  ;;            (list (if (markerp beg) beg (copy-marker beg))
+  ;;                  (copy-marker end t)
+  ;;                  table
+  ;;                  (plist-get plist :predicate)))
 
-       ;; Refresh candidates forcibly!!!
-       (pcase-let* ((`(,beg ,end ,table ,pred) completion-in-region--data)
-                    (pt (- (point) beg))
-                    (str (buffer-substring-no-properties beg end)))
-         (corfu--update-candidates str pt table (plist-get plist :predicate)))
+  ;;      ;; Refresh candidates forcibly!!!
+  ;;      (pcase-let* ((`(,beg ,end ,table ,pred) completion-in-region--data)
+  ;;                   (pt (- (point) beg))
+  ;;                   (str (buffer-substring-no-properties beg end)))
+  ;;        (corfu--update-candidates str pt table (plist-get plist :predicate)))
 
-       (corfu--setup)
-       (corfu--update)))))
+  ;;      (corfu--setup)
+  ;;      (let ((corfu-on-exact-match 'quit))
+  ;;        (corfu--update))))))
+  )
 
 (defun tabnine-capf-callback (&rest args)
   "Callback from python."
@@ -212,18 +216,15 @@ Note that setting this too small will cause TabNine to not be able to read the e
   "Send REQUEST to TabNine server.  REQUEST needs to be JSON-serializable object."
   (when (null tabnine-capf--process)
     (tabnine-capf-start-process))
-  (let ((tmp-tick (corfu--auto-tick)))
-    (unless (equal tabnine-capf--corfu-tick tmp-tick)
-      (setq tabnine-capf--corfu-tick tmp-tick)
-      (let* ((before (plist-get request :before))
-             (after (plist-get request :after))
-             (filename (plist-get request :filename))
-             (region_includes_beginning (plist-get request :region_includes_beginning))
-             (region_includes_end (plist-get request :region_includes_end))
-             (max_num_results (plist-get request :max_num_results)))
-        (tabnine-epc:call-deferred tabnine-capf--process 'complete (list before after filename
-                                                                         region_includes_beginning region_includes_end
-                                                                         max_num_results))))))
+  (let* ((before (plist-get request :before))
+         (after (plist-get request :after))
+         (filename (plist-get request :filename))
+         (region_includes_beginning (plist-get request :region_includes_beginning))
+         (region_includes_end (plist-get request :region_includes_end))
+         (max_num_results (plist-get request :max_num_results)))
+    (tabnine-epc:call-deferred tabnine-capf--process 'complete (list before after filename
+                                                                     region_includes_beginning region_includes_end
+                                                                     max_num_results))))
 
 (defun tabnine-capf--make-request ()
   "Create request body for method METHOD and parameters PARAMS."
@@ -315,7 +316,10 @@ Return completion candidates.  Must be called after `tabnine-capf-query'."
            (start (or (car bounds) (point)))
            (end (or (cdr bounds) (point))))
       (unless tabnine-capf--disabled
-        (tabnine-capf-query)
+        (let ((tmp-tick (corfu--auto-tick)))
+          (unless (equal tabnine-capf--corfu-tick tmp-tick)
+            (setq tabnine-capf--corfu-tick tmp-tick)
+            (tabnine-capf-query)))
         (list
          start
          end
