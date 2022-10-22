@@ -61,7 +61,7 @@
 (require 'cl-lib)
 (require 'url)
 (require 'dash)
-(require 'tabnine-epc)
+(require 'tabnine-capf-epc)
 (require 'corfu)
 
 ;;
@@ -120,10 +120,22 @@ Note that setting this too small will cause TabNine to not be able to read the e
 ;; Variables
 ;;
 
-(defvar tabnine-capf--process nil
+(defvar tabnine-capf--server nil
   "TabNine server process.")
 
-(defvar tabnine-capf--response nil
+(defvar tabnine-capf--server-port nil
+  "TabNine server port")
+
+(defcustom tabnine-capf-name "*tabnine-capf*"
+  "Name of Tabnine-Capf buffer."
+  :type 'string)
+(defvar tabnine-capf-is-starting nil)
+(defvar tabnine-capf-epc-process nil)
+(defvar tabnine-capf-internal-process nil)
+(defvar tabnine-capf-internal-process-prog nil)
+(defvar tabnine-capf-internal-process-args nil)
+
+(defvar tabnine-capf--candidates nil
   "Temporarily stored TabNine server responses.")
 
 (defvar tabnine-capf--disabled nil
@@ -139,82 +151,146 @@ Note that setting this too small will cause TabNine to not be able to read the e
 ;; Global methods
 ;;
 
+(defun tabnine-capf--start-epc-server ()
+  "Function to start the EPC server."
+  (unless (process-live-p tabnine-capf--server)
+    (setq tabnine-capf--server
+          (tabnine-capf-epc-server-start
+           (lambda (mngr)
+             (let ((mngr mngr))
+               (tabnine-capf-epc-define-method mngr 'eval-in-emacs 'tabnine-capf--eval-in-emacs-func)
+               (tabnine-capf-epc-define-method mngr 'tabnine-capf--first-start 'tabnine-capf--first-start)
+               (tabnine-capf-epc-define-method mngr 'tabnine-capf-callback 'tabnine-capf-callback)
+               ))))
+    (if tabnine-capf--server
+        (setq tabnine-capf--server-port (process-contact tabnine-capf--server :service))
+      (error "[Tabnine] tabnine-server failed to start")))
+  tabnine-capf--server)
+
+(defun tabnine-capf--eval-in-emacs-func (sexp-string)
+  (eval (read sexp-string))
+  nil)
+
 ;;;###autoload
 (defun tabnine-capf-install-binary ()
   "Install Tabnine binary."
   (interactive)
-  (when (tabnine-epc:live-p tabnine-capf--process)
-    (tabnine-epc:call-deferred tabnine-capf--process 'install_tabnine nil)))
+  (when (tabnine-capf-epc-live-p tabnine-capf-epc-process)
+    (tabnine-capf-deferred-chain
+      (tabnine-capf-epc-call-deferred tabnine-capf-epc-process 'install_tabnine nil))))
 
 (defun tabnine-capf-start-process ()
-  "Start TabNine process."
-  (setq tabnine-capf--disabled t)
-  (tabnine-capf-kill-process)
-  (let ((process-connection-type nil))
-    (setq tabnine-capf--process
-          (tabnine-epc:start-epc "python3"
-                                 (list tabnine-capf-python-file)))
-    (tabnine-epc:define-method tabnine-capf--process
-                               'tabnine-capf-callback
-                               #'tabnine-capf-callback))
+  "Start Tabnine-Capf process if it isn't started."
+  (setq tabnine-capf-is-starting t)
+  (unless (tabnine-capf-epc-live-p tabnine-capf-epc-process)
+    ;; start epc server and set `tabnine-capf-server-port'
+    (tabnine-capf--start-epc-server)
+    (let* ((tabnine-capf-args (append
+                               (list tabnine-capf-python-file)
+                               (list (number-to-string tabnine-capf--server-port))
+                               )))
+
+      ;; Set process arguments.
+      (setq tabnine-capf-internal-process-prog "python3")
+      (setq tabnine-capf-internal-process-args tabnine-capf-args)
+
+      ;; Start python process.
+      (let ((process-connection-type t))
+        (setq tabnine-capf-internal-process
+              (apply 'start-process
+                     tabnine-capf-name tabnine-capf-name
+                     tabnine-capf-internal-process-prog tabnine-capf-internal-process-args)))
+      (set-process-query-on-exit-flag tabnine-capf-internal-process nil))
+    ;; (tabnine-capf--first-start)
+    )
+
   ;; hook setup
-  (message "TabNine server started.")
   (dolist (hook tabnine-capf--hooks-alist)
     (add-hook (car hook) (cdr hook)))
   (setq tabnine-capf--disabled nil))
 
-(defun update-corfu ()
+
+(defun tabnine-capf--update-corfu ()
   "Update corfu candidate manually."
-  ;;  HACK: still suffer from wrong icons
-  (corfu--auto-complete nil)
-  ;; (pcase (while-no-input ;; Interruptible capf query
-  ;;          (run-hook-wrapped 'completion-at-point-functions #'corfu--capf-wrapper))
-  ;;   (`(,fun ,beg ,end ,table . ,plist)
-  ;;    (let ((completion-in-region-mode-predicate
-  ;;           (lambda () (eq beg (car-safe (funcall fun)))))
-  ;;          (completion-extra-properties plist))
-  ;;      (setq completion-in-region--data
-  ;;            (list (if (markerp beg) beg (copy-marker beg))
-  ;;                  (copy-marker end t)
-  ;;                  table
-  ;;                  (plist-get plist :predicate)))
+  (ignore-errors
+    (pcase (while-no-input ;; Interruptible capf query
+             ;;  TODO: Is this expensive?
+             (run-hook-wrapped 'completion-at-point-functions #'corfu--capf-wrapper))
+      (`(,fun ,beg ,end ,table . ,plist)
+       (let ((completion-in-region-mode-predicate
+              (lambda () (eq beg (car-safe (funcall fun)))))
+             (completion-extra-properties plist))
+         (setq completion-in-region--data
+               (list (if (markerp beg) beg (copy-marker beg))
+                     (copy-marker end t)
+                     table
+                     (plist-get plist :predicate)))
+         (pcase-let* ((`(,beg ,end ,table ,pred)
+                       completion-in-region--data)
+                      (pt (- (point) beg))
+                      (str (buffer-substring-no-properties beg end))
+                      (input (cons str pt)))
+           (when (equal corfu--input input)
+             (pcase (let ((non-essential t))
+                      (setq corfu--extra completion-extra-properties)
+                      (corfu--recompute str pt table pred))
+               ('nil (keyboard-quit))
+               ((and state (pred consp))
+                (dolist (s state) (set (car s) (cdr s)))
+                (setq corfu--input input
+                      corfu--index corfu--preselect))))
+           input))))
+    (corfu--exhibit)
+    )
+  t)
 
-  ;;      ;; Refresh candidates forcibly!!!
-  ;;      (pcase-let* ((`(,beg ,end ,table ,pred) completion-in-region--data)
-  ;;                   (pt (- (point) beg))
-  ;;                   (str (buffer-substring-no-properties beg end)))
-  ;;        (corfu--update-candidates str pt table (plist-get plist :predicate)))
 
-  ;;      (corfu--setup)
-  ;;      (let ((corfu-on-exact-match 'quit))
-  ;;        (corfu--update))))))
-  )
-
-(defun tabnine-capf-callback (&rest args)
+(defun tabnine-capf-callback (args)
   "Callback from python."
-  (setq tabnine-capf--response args)
+  (setq tabnine-capf--candidates (tabnine-capf--get-candidates args))
   ;;  TODO: need a more elegant way to handle this
   (when (and
          (< corfu--index 0)
          (or (not (featurep 'evil)) (evil-insert-state-p))
          (equal tabnine-capf--corfu-tick (corfu--auto-tick)))
-    (update-corfu)))
+    (tabnine-capf--update-corfu))
+  nil)
 
 (defun tabnine-capf-kill-process ()
   "Kill TabNine process."
   (interactive)
-  (when tabnine-capf--process
-    (let ((process tabnine-capf--process))
-      (setq tabnine-capf--process nil)
-      (tabnine-epc:stop-epc process)))
+  (when (tabnine-capf-epc-live-p tabnine-capf-epc-process)
+    (tabnine-capf-epc-call-sync tabnine-capf-epc-process 'cleanup nil)
+    ;; Delete Tabnine-Capf server process.
+    (tabnine-capf-epc-stop-epc tabnine-capf-epc-process)
+    ;; Kill *tabnine-capf* buffer.
+    (when (get-buffer tabnine-capf-name)
+      (kill-buffer tabnine-capf-name))
+    (setq tabnine-capf-epc-process nil)
+    (message "[Tabnine-capf] Process terminated."))
+
   ;; hook remove
   (dolist (hook tabnine-capf--hooks-alist)
-    (remove-hook (car hook) (cdr hook)))
-  (setq tabnine-capf--disabled t))
+    (remove-hook (car hook) (cdr hook))))
+
+
+(defun tabnine-capf--first-start (server-port)
+  "Call `tabnine-capf--open-internal' upon receiving `start_finish' signal from server."
+  ;; Make EPC process.
+  (setq tabnine-capf-epc-process (make-tabnine-capf-epc-manager
+                                  :server-process tabnine-capf-internal-process
+                                  :commands (cons tabnine-capf-internal-process-prog tabnine-capf-internal-process-args)
+                                  :title (mapconcat 'identity (cons tabnine-capf-internal-process-prog tabnine-capf-internal-process-args) " ")
+                                  :port server-port
+                                  :connection (tabnine-capf-epc-connect "localhost" server-port)))
+  (tabnine-capf-epc-init-epc-layer tabnine-capf-epc-process)
+  (setq tabnine-capf-is-starting nil)
+  (message "TabNine server started.")
+  t)
 
 (defun tabnine-capf-send-request (request)
   "Send REQUEST to TabNine server.  REQUEST needs to be JSON-serializable object."
-  (when (null tabnine-capf--process)
+  (unless (tabnine-capf-epc-live-p tabnine-capf-epc-process)
     (tabnine-capf-start-process))
   (let* ((before (plist-get request :before))
          (after (plist-get request :after))
@@ -222,9 +298,10 @@ Note that setting this too small will cause TabNine to not be able to read the e
          (region_includes_beginning (plist-get request :region_includes_beginning))
          (region_includes_end (plist-get request :region_includes_end))
          (max_num_results (plist-get request :max_num_results)))
-    (tabnine-epc:call-deferred tabnine-capf--process 'complete (list before after filename
-                                                                     region_includes_beginning region_includes_end
-                                                                     max_num_results))))
+    (tabnine-capf-deferred-chain
+      (tabnine-capf-epc-call-deferred tabnine-capf-epc-process 'complete (list before after filename
+                                                                               region_includes_beginning region_includes_end
+                                                                               max_num_results)))))
 
 (defun tabnine-capf--make-request ()
   "Create request body for method METHOD and parameters PARAMS."
@@ -248,7 +325,8 @@ Note that setting this too small will cause TabNine to not be able to read the e
 (defun tabnine-capf-query ()
   "Query TabNine server for auto-complete."
   (interactive)
-  (unless tabnine-capf--disabled
+  (unless (or tabnine-capf--disabled
+              tabnine-capf-is-starting)
     ;; (setq tabnine-capf-last-change-tick (corfu--auto-tick))
     (let ((request (tabnine-capf--make-request)))
       (tabnine-capf-send-request request))))
@@ -268,7 +346,7 @@ Note that setting this too small will cause TabNine to not be able to read the e
                   (when (s-present? kind)
                     (format " [%s]" kind))))))))
 
-(defun tabnine-capf--candidates ()
+(defun tabnine-capf--get-candidates (response)
   "Candidates-command handler for the company backend for PREFIX.
 
 Return completion candidates.  Must be called after `tabnine-capf-query'."
@@ -280,7 +358,7 @@ Return completion candidates.  Must be called after `tabnine-capf-query'."
       'new_suffix (plist-get item :new_suffix)
       'annotation (or (plist-get item :detail) "")
       ))
-   (plist-get tabnine-capf--response :results)))
+   response))
 
 (defun tabnine-capf--post-completion (candidate)
   "Replace old suffix with new suffix for CANDIDATE."
@@ -301,18 +379,19 @@ Return completion candidates.  Must be called after `tabnine-capf-query'."
 (defun tabnine-capf-restart-server ()
   "Start/Restart TabNine server."
   (interactive)
-  (tabnine-capf-start-process))
+  (setq tabnine-capf-is-starting nil)
+  (tabnine-capf-kill-process)
+  (tabnine-capf-start-process)
+  )
 
 ;;;###autoload
-(defun tabnine-completion-at-point (&optional interactive)
+(defun tabnine-capf (&optional interactive)
   "TabNine Completion at point function."
   (interactive (list t))
   (if interactive
-      (let ((completion-at-point-functions (list 'tabnine-completion-at-point)))
+      (let ((completion-at-point-functions (list 'tabnine-capf)))
         (completion-at-point))
     (let* ((bounds (bounds-of-thing-at-point 'symbol))
-           (candidates (tabnine-capf--candidates))
-           (get-candidates (lambda () candidates))
            (start (or (car bounds) (point)))
            (end (or (cdr bounds) (point))))
       (unless tabnine-capf--disabled
@@ -323,7 +402,7 @@ Return completion candidates.  Must be called after `tabnine-capf-query'."
         (list
          start
          end
-         candidates
+         tabnine-capf--candidates
          :exclusive 'no
          :company-kind (lambda (_) (intern "tabnine"))
          :annotation-function
@@ -333,8 +412,9 @@ Return completion candidates.  Must be called after `tabnine-capf-query'."
          :exit-function
          (lambda (candidate status)
            "Post-completion function for tabnine."
-           (let ((item (cl-find candidate (funcall get-candidates) :test #'string=)))
-             (tabnine-capf--post-completion item))))))))
+           (let ((item (cl-find candidate tabnine-capf--candidates :test #'string=)))
+             (when item
+               (tabnine-capf--post-completion item)))))))))
 
 
 (provide 'tabnine-capf)

@@ -1,10 +1,10 @@
+import os
 import platform
 import stat
-import os
-from urllib.request import urlopen, urlretrieve
-from urllib.error import HTTPError
-import zipfile
 import threading
+import zipfile
+from urllib.error import HTTPError
+from urllib.request import urlopen, urlretrieve
 
 _TABNINE_SERVER_URL = "https://update.tabnine.com/bundles"
 _TABNINE_EXECUTABLE = "TabNine"
