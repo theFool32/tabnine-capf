@@ -210,9 +210,11 @@ class Manager:
             if self.client is None:
                 self.client.close()
             self.tabnine.stop = True
-            self.tabnine.dispatcher.stop = True
-            self.tabnine.receiver.stop = True
             if self.tabnine.process is not None:
+                if self.tabnine.dispatcher:
+                    self.tabnine.dispatcher.stop = True
+                if self.tabnine.receiver:
+                    self.tabnine.receiver.stop = True
                 self.tabnine.process.terminate()
 
         self.server.register_function(complete)
