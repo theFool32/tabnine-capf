@@ -218,41 +218,31 @@ Note that setting this too small will cause TabNine to not be able to read the e
              (run-hook-wrapped 'completion-at-point-functions #'corfu--capf-wrapper))
       (`(,fun ,beg ,end ,table . ,plist)
        (let ((completion-in-region-mode-predicate
-              (lambda () (eq beg (car-safe (funcall fun)))))
-             (completion-extra-properties plist))
+              (lambda () (eq beg (car-safe (funcall fun))))))
          (setq completion-in-region--data
                (list (if (markerp beg) beg (copy-marker beg))
                      (copy-marker end t)
                      table
                      (plist-get plist :predicate)))
-         (pcase-let* ((`(,beg ,end ,table ,pred)
-                       completion-in-region--data)
-                      (pt (- (point) beg))
-                      (str (buffer-substring-no-properties beg end))
-                      (input (cons str pt)))
-           (when (equal corfu--input input)
-             (pcase (let ((non-essential t))
-                      (setq corfu--extra completion-extra-properties)
-                      (corfu--recompute str pt table pred))
-               ('nil (keyboard-quit))
-               ((and state (pred consp))
-                (dolist (s state) (set (car s) (cdr s)))
-                (setq corfu--input input
-                      corfu--index corfu--preselect))))
-           input))))
-    (corfu--exhibit)
+         (setq completion-extra-properties plist)
+         ;; (setq corfu--extra completion-extra-properties)
+         (let ((corfu--input nil))
+           (corfu--setup)
+           (corfu--exhibit 'auto))
+         )))
     )
   t)
 
 
 (defun tabnine-capf-callback (args)
   "Callback from python."
-  (setq tabnine-capf--candidates (tabnine-capf--get-candidates args))
   ;;  TODO: need a more elegant way to handle this
+  ;;  FIXME: how to prevent both `corfu-next' and this?
   (when (and
          (< corfu--index 0)
          (or (not (featurep 'evil)) (evil-insert-state-p))
          (equal tabnine-capf--corfu-tick (corfu--auto-tick)))
+    (setq tabnine-capf--candidates (tabnine-capf--get-candidates args))
     (tabnine-capf--update-corfu))
   nil)
 
